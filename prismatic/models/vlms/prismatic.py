@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Type, Union
 
 import torch
+import torch.nn as nn
 from PIL import Image
 from torch.distributed.fsdp.wrap import _module_wrap_policy, _or_policy
 from transformers.modeling_outputs import CausalLMOutputWithPast
@@ -33,6 +34,24 @@ overwatch = initialize_overwatch(__name__)
 
 # HuggingFace Default / LLaMa-2 IGNORE_INDEX (for labels)
 IGNORE_INDEX = -100
+
+
+
+# prismatic/models/backbones/vision/token_pruner.py
+class TokenPruner(nn.Module):
+    def __init__(self, num_queries, embed_dim, num_heads):
+        super().__init__()
+        self.query = nn.Parameter(torch.randn(num_queries, embed_dim))
+        self.cross_attn = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
+        nn.init.normal_(self.query, std=0.02)
+
+    def forward(self, x):
+        # x: [B, N, D]
+        B = x.size(0)
+        query = self.query.unsqueeze(0).expand(B, -1, -1)  # [B, num_queries, D]
+        out, attn = self.cross_attn(query, x, x)
+        return out  # [B, num_queries, D]
+
 
 
 class PrismaticVLM(VLM):
@@ -81,6 +100,10 @@ class PrismaticVLM(VLM):
             token_idx_list = self.llm_backbone.tokenizer.encode(trigger_string, add_special_tokens=False)
             assert len(token_idx_list) == 1, f'String "{trigger_string}" is tokenized as more than one token!'
             self.string2idx[trigger_string] = token_idx_list[0]
+            
+            
+        #TODO: learnable query
+        self.token_pruner = TokenPruner(num_queries=8, embed_dim=vision_backbone.embed_dim, num_heads=8)
 
     @classmethod
     def from_pretrained(
@@ -371,6 +394,9 @@ class PrismaticVLM(VLM):
             else:
                 patch_features = self.vision_backbone(pixel_values[multimodal_indices])
 
+        #TODO: token pruner
+        patch_features = self.token_pruner(patch_features)
+    
         # Projection Logic :: [bsz, num_patches, llm_embed_dim] =>> num_patches = (2 *) (256 + 1) for ViT-L + CLS
         projected_patch_embeddings = self.projector(patch_features)
         projected_patch_attention_mask = None

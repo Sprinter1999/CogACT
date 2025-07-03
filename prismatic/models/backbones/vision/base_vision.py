@@ -62,8 +62,6 @@ class VisionBackbone(nn.Module, ABC):
         self.featurizer: nn.Module = None
         self.image_transform: ImageTransform = None
         
-        #TODO: learnable query
-        self.token_pruner = TokenPruner(num_queries=8, embed_dim=..., num_heads=8)
 
     def get_image_transform(self) -> ImageTransform:
         return self.image_transform
@@ -210,17 +208,3 @@ class TimmViTBackbone(VisionBackbone, ABC):
         return self.dtype
 
 
-# prismatic/models/backbones/vision/token_pruner.py
-class TokenPruner(nn.Module):
-    def __init__(self, num_queries, embed_dim, num_heads):
-        super().__init__()
-        self.query = nn.Parameter(torch.randn(num_queries, embed_dim))
-        self.cross_attn = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
-        nn.init.normal_(self.query, std=0.02)
-
-    def forward(self, x):
-        # x: [B, N, D]
-        B = x.size(0)
-        query = self.query.unsqueeze(0).expand(B, -1, -1)  # [B, num_queries, D]
-        out, attn = self.cross_attn(query, x, x)
-        return out  # [B, num_queries, D]
